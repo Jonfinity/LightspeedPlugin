@@ -12,7 +12,7 @@ public class LightspeedPlugin
 
     public class entryCarData
     {
-        public int TotalKmDriven { get; set; } = 0;
+        public double TotalKmDriven { get; set; } = 0;
         public int BestTopSpeed { get; set; } = 0;
         public string MostCommonDriver { get; set; } = NO_NAME;
     }
@@ -32,9 +32,10 @@ public class LightspeedPlugin
     public readonly SessionManager _sessionManager;
     private readonly CSPFeatureManager _cspFeatureManager;
 
-    private static readonly string[] SensitiveCharacters = { "\\", "*", "_", "~", "`", "|", ">", ":", "@" };
-    private static readonly string[] ForbiddenUsernameSubstrings = { "discord", "@", "#", ":", "```" };
-    private static readonly string[] ForbiddenUsernames = { "everyone", "here" };
+    private Dictionary<string, clientEntryCarData> _entryCarQueueDictionary = new Dictionary<string, clientEntryCarData>();
+
+    private static readonly string[] _forbiddenUsernameSubstrings = { "discord", "@", "#", ":", "```" };
+    private static readonly string[] _forbiddenUsernames = { "everyone", "here" };
 
     public LightspeedPlugin(EntryCarManager entryCarManager, SessionManager sessionManager, CSPFeatureManager cspFeatureManager)
     {
@@ -65,6 +66,11 @@ public class LightspeedPlugin
         timer1.Elapsed += new System.Timers.ElapsedEventHandler(HandleClientEntryCars);
         timer1.Interval = 1000;
         timer1.Start();
+
+        var timer2 = new System.Timers.Timer();
+        timer2.Elapsed += new System.Timers.ElapsedEventHandler(HandleNewClientData);
+        timer2.Interval = 10000;
+        timer2.Start();
 
         _entryCarDataTimer = new System.Timers.Timer();
         _entryCarDataTimer.Elapsed += new System.Timers.ElapsedEventHandler(StartEntryCarData);
@@ -102,6 +108,37 @@ public class LightspeedPlugin
                             session.SetTopSpeed(speedKmh);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private async void HandleNewClientData(object? sender, EventArgs e)
+    {
+        foreach (var entryCar in _entryCarQueueDictionary)
+        {
+            string model = entryCar.Key.Split(":")[0];
+            clientEntryCarData data = entryCar.Value;
+            string dir = $"{ENTRY_CAR_DATA_DIR}/{model}/{model}.json";
+            if(File.Exists(dir))
+            {
+                Log.Information(model);
+                FileStream stream = File.Open(dir, FileMode.Open);
+                entryCarData? existingData = DeserializeEntryCarDataFromStream(stream, dir);
+                if(existingData != null)
+                {
+                    existingData.TotalKmDriven += data.KmDriven;
+                    if(data.TopSpeed > existingData.BestTopSpeed)
+                    {
+                        existingData.BestTopSpeed = data.TopSpeed;
+                    }
+
+                    stream.SetLength(0);
+
+                    _entryCarQueueDictionary.Remove(entryCar.Key);
+                
+                    await System.Text.Json.JsonSerializer.SerializeAsync(stream, existingData);
+                    await stream.DisposeAsync();
                 }
             }
         }
@@ -153,8 +190,9 @@ public class LightspeedPlugin
 
     public async void CreateClientForEntryCarData(EntryCar car, ACTcpClient client, LightspeedSession session)
     {
+        string model = car.Model;
         string guid = client.Guid.ToString();
-        string dir = $"{ENTRY_CAR_DATA_DIR}/{car.Model}/{guid}/";
+        string dir = $"{ENTRY_CAR_DATA_DIR}/{model}/{guid}/";
         if(!Directory.Exists(dir))
         {
             Directory.CreateDirectory(dir);
@@ -176,12 +214,12 @@ public class LightspeedPlugin
         else
         {
             stream = File.Open(newDir, FileMode.Open);
-            clientEntryCarData? existingData = DeserializeFromStream(stream, newDir);
+            clientEntryCarData? existingData = DeserializeClientEntryCarDataFromStream(stream, newDir);
             if(existingData != null)
             {
                 newData.KmDriven += existingData.KmDriven;
                 newData.TimeSpent += existingData.TimeSpent;
-                if(existingData.TopSpeed > newData.TopSpeed)
+                if(newData.TopSpeed < existingData.TopSpeed)
                 {
                     newData.TopSpeed = existingData.TopSpeed;
                 }
@@ -192,16 +230,18 @@ public class LightspeedPlugin
         
         await System.Text.Json.JsonSerializer.SerializeAsync(stream, newData);
         await stream.DisposeAsync();
+
+        _entryCarQueueDictionary[$"{model}:{guid}"] = newData;
     }
 
     public static string SanitizeUsername(string name)
     {
-        foreach (string str in ForbiddenUsernames)
+        foreach (string str in _forbiddenUsernames)
         {
             if (name == str) return $"_{str}";
         }
 
-        foreach (string str in ForbiddenUsernameSubstrings)
+        foreach (string str in _forbiddenUsernameSubstrings)
         {
             name = Regex.Replace(name, str, new string('*', str.Length), RegexOptions.IgnoreCase);
         }
@@ -211,8 +251,13 @@ public class LightspeedPlugin
         return name;
     }
 
-    public static clientEntryCarData? DeserializeFromStream(FileStream stream, string dir)
+    public static clientEntryCarData? DeserializeClientEntryCarDataFromStream(FileStream stream, string dir)
     {
         return (clientEntryCarData?) System.Text.Json.JsonSerializer.Deserialize(stream, typeof(clientEntryCarData));
+    }
+
+    public static entryCarData? DeserializeEntryCarDataFromStream(FileStream stream, string dir)
+    {
+        return (entryCarData?) System.Text.Json.JsonSerializer.Deserialize(stream, typeof(entryCarData));
     }
 }

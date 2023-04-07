@@ -1,5 +1,5 @@
 # LightspeedPlugin
-An [AssettoServer](https://github.com/compujuckel/AssettoServer) plugin made for Lightspeed, an Assetto Corsa server.
+An [AssettoServer](https://github.com/compujuckel/AssettoServer) plugin made for Lightspeed, an Assetto Corsa server which has since been closed.
 
 This plugin was not made for public use and will not be optimized for such. It's a work in progress and I plan to extend on it. Feel free to use it at your own discresion while respecting the [license](https://github.com/YhugiLS/LightspeedPlugin/blob/main/LICENSE).
 
